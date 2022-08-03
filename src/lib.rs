@@ -45,6 +45,52 @@ where
     }
 }
 
+impl<A, B, Args, T, E> Map<A, B, Args, (T,), Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<(T,)>,
+{
+    #[inline]
+    fn apply_ok(&self, args: Args) -> Result<B::Output, E> {
+        let args = self.0.call(args);
+        match args {
+            Ok(args) => Ok(self.1.call((args,))),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<A, B, Args, T, E> Fn<Args> for Map<A, B, Args, (T,), Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<(T,)>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.apply_ok(args)
+    }
+}
+
+impl<A, B, Args, T, E> FnMut<Args> for Map<A, B, Args, (T,), Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<(T,)>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.apply_ok(args)
+    }
+}
+
+impl<A, B, Args, T, E> FnOnce<Args> for Map<A, B, Args, (T,), Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<(T,)>,
+{
+    type Output = Result<B::Output, E>;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.apply_ok(args)
+    }
+}
+
 impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,), ((),)>
 where
     A: Fn<Args>,
@@ -124,6 +170,13 @@ fn multiply(a: i32, b: i32) -> i32 {
 fn output() -> (i32, i32) {
     (4, 2)
 }
+fn error_in(a: i32) -> Result<i32, String> {
+    if a > 4 {
+        Ok(a)
+    } else {
+        Err("Value cannot be above 4".into())
+    }
+}
 
 fn main() {
     map(foo, foo)();
@@ -134,4 +187,5 @@ fn main() {
     map(multiply, plus)(4, 5);
     map(output, multiply)();
     map(map(output, multiply), plus)();
+    map(error_in, plus)(3);
 }
