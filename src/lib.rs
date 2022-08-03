@@ -35,6 +35,20 @@ where
     )
 }
 
+fn map_some<A, B, Args, Args2, T>(a: A, b: B) -> Map<A, B, Args, Args2, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<Args2>,
+{
+    Map(
+        a,
+        b,
+        PhantomData::default(),
+        PhantomData::default(),
+        PhantomData::default(),
+    )
+}
+
 impl<A, B, Args, T> Map<A, B, Args, (T,), (T,)>
 where
     A: Fn<Args, Output = T>,
@@ -86,6 +100,98 @@ where
             Ok(args) => Ok(self.1.call(args)),
             Err(e) => Err(e),
         }
+    }
+}
+
+impl<A, B, Args, T> Map<A, B, Args, (T,), Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    #[inline]
+    fn apply_some_tuple(&self, args: Args) -> Option<B::Output> {
+        let args = self.0.call(args);
+        match args {
+            Some(args) => Some(self.1.call((args,))),
+            None => None,
+        }
+    }
+}
+
+impl<A, B, Args, T> Map<A, B, Args, T, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    #[inline]
+    fn apply_some(&self, args: Args) -> Option<B::Output> {
+        let args = self.0.call(args);
+        match args {
+            Some(args) => Ok(self.1.call(args)),
+            None => None,
+        }
+    }
+}
+
+impl<A, B, Args, T> Fn<Args> for Map<A, B, Args, (T,), Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.apply_some_tuple(args)
+    }
+}
+
+impl<A, B, Args, T> FnMut<Args> for Map<A, B, Args, (T,), Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.apply_some_tuple(args)
+    }
+}
+
+impl<A, B, Args, T> FnOnce<Args> for Map<A, B, Args, (T,), Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    type Output = Option<B::Output>;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.apply_some_tuple(args)
+    }
+}
+
+impl<A, B, Args, T> Fn<Args> for Map<A, B, Args, T, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.apply_some(args)
+    }
+}
+
+impl<A, B, Args, T> FnMut<Args> for Map<A, B, Args, T, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.apply_some(args)
+    }
+}
+
+impl<A, B, Args, T> FnOnce<Args> for Map<A, B, Args, T, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    type Output = Option<B::Output>;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.apply_some(args)
     }
 }
 
@@ -244,6 +350,13 @@ fn errors(a: i32) -> Result<(i32, i32), String> {
         Err("Value cannot be above 4".into())
     }
 }
+fn optional(a: i32) -> Option<i32> {
+    if a > 10 {
+        None
+    } else {
+        Some(a + 2)
+    }
+}
 
 fn main() {
     map(foo, foo)();
@@ -260,4 +373,7 @@ fn main() {
     map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
     map_ok(errors, multiply);
     map_ok(map_ok(errors, multiply), errors);
+    map_some(optional, times);
+    map_some(map_some(optional, times), optional);
+    map_some(map_some(optional, times), times);
 }
