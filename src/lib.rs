@@ -107,6 +107,8 @@ where
     }
 }
 
+fn foo() {}
+
 fn test() -> i32 {
     3
 }
@@ -124,6 +126,8 @@ fn output() -> (i32, i32) {
 }
 
 fn main() {
+    map(foo, foo)();
+    map(foo, test)();
     map(test, plus)();
     map(plus, plus)(4);
     map(test, plus)();
