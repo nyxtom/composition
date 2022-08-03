@@ -65,10 +65,25 @@ where
     B: Fn<(T,)>,
 {
     #[inline]
-    fn apply_ok(&self, args: Args) -> Result<B::Output, E> {
+    fn apply_ok_tuple(&self, args: Args) -> Result<B::Output, E> {
         let args = self.0.call(args);
         match args {
             Ok(args) => Ok(self.1.call((args,))),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl<A, B, Args, T, E> Map<A, B, Args, T, Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<T>,
+{
+    #[inline]
+    fn apply_ok(&self, args: Args) -> Result<B::Output, E> {
+        let args = self.0.call(args);
+        match args {
+            Ok(args) => Ok(self.1.call(args)),
             Err(e) => Err(e),
         }
     }
@@ -80,7 +95,7 @@ where
     B: Fn<(T,)>,
 {
     extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_ok(args)
+        self.apply_ok_tuple(args)
     }
 }
 
@@ -90,7 +105,7 @@ where
     B: Fn<(T,)>,
 {
     extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_ok(args)
+        self.apply_ok_tuple(args)
     }
 }
 
@@ -98,6 +113,37 @@ impl<A, B, Args, T, E> FnOnce<Args> for Map<A, B, Args, (T,), Result<T, E>>
 where
     A: Fn<Args, Output = Result<T, E>>,
     B: Fn<(T,)>,
+{
+    type Output = Result<B::Output, E>;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.apply_ok_tuple(args)
+    }
+}
+
+impl<A, B, Args, T, E> Fn<Args> for Map<A, B, Args, T, Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<T>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.apply_ok(args)
+    }
+}
+
+impl<A, B, Args, T, E> FnMut<Args> for Map<A, B, Args, T, Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<T>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.apply_ok(args)
+    }
+}
+
+impl<A, B, Args, T, E> FnOnce<Args> for Map<A, B, Args, T, Result<T, E>>
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<T>,
 {
     type Output = Result<B::Output, E>;
     extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
@@ -191,6 +237,13 @@ fn error_in(a: i32) -> Result<i32, String> {
         Err("Value cannot be above 4".into())
     }
 }
+fn errors(a: i32) -> Result<(i32, i32), String> {
+    if a > 4 {
+        Ok((a + 1, a + 2))
+    } else {
+        Err("Value cannot be above 4".into())
+    }
+}
 
 fn main() {
     map(foo, foo)();
@@ -205,4 +258,6 @@ fn main() {
     map_ok(map_ok(error_in, plus), plus);
     map_ok(map_ok(error_in, plus), error_in);
     map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
+    map_ok(errors, multiply);
+    map_ok(map_ok(errors, multiply), errors);
 }
