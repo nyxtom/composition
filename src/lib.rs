@@ -21,10 +21,24 @@ where
     )
 }
 
-impl<A, B, Args> Map<A, B, Args, (A::Output,), ((),)>
+fn map_ok<A, B, Args, Args2, T, E>(a: A, b: B) -> Map<A, B, Args, Args2, Result<T, E>>
 where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<Args2>,
+{
+    Map(
+        a,
+        b,
+        PhantomData::default(),
+        PhantomData::default(),
+        PhantomData::default(),
+    )
+}
+
+impl<A, B, Args, T> Map<A, B, Args, (T,), (T,)>
+where
+    A: Fn<Args, Output = T>,
+    B: Fn<(T,)>,
 {
     #[inline]
     fn apply_tuple(&self, args: Args) -> B::Output {
@@ -33,10 +47,10 @@ where
     }
 }
 
-impl<A, B, Args> Map<A, B, Args, A::Output, ()>
+impl<A, B, Args, T> Map<A, B, Args, T, ()>
 where
-    A: Fn<Args>,
-    B: Fn<A::Output>,
+    A: Fn<Args, Output = T>,
+    B: Fn<T>,
 {
     #[inline]
     fn apply(&self, args: Args) -> B::Output {
@@ -91,7 +105,7 @@ where
     }
 }
 
-impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,), ((),)>
+impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
 where
     A: Fn<Args>,
     B: Fn<(A::Output,)>,
@@ -101,7 +115,7 @@ where
     }
 }
 
-impl<A, B, Args> FnMut<Args> for Map<A, B, Args, (A::Output,), ((),)>
+impl<A, B, Args> FnMut<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
 where
     A: Fn<Args>,
     B: Fn<(A::Output,)>,
@@ -111,7 +125,7 @@ where
     }
 }
 
-impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, (A::Output,), ((),)>
+impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
 where
     A: Fn<Args>,
     B: Fn<(A::Output,)>,
@@ -187,5 +201,8 @@ fn main() {
     map(multiply, plus)(4, 5);
     map(output, multiply)();
     map(map(output, multiply), plus)();
-    map(error_in, plus)(3);
+    map_ok(error_in, plus);
+    map_ok(map_ok(error_in, plus), plus);
+    map_ok(map_ok(error_in, plus), error_in);
+    map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
 }
