@@ -1,78 +1,246 @@
 #![feature(fn_traits)]
 #![feature(unboxed_closures)]
-use std::marker::PhantomData;
+#![feature(type_alias_impl_trait)]
+use async_trait::async_trait;
+use std::{
+    future::{Future, IntoFuture},
+    marker::PhantomData,
+    pin::Pin,
+};
 
-pub struct Map<A, B, Args, Args2, T>(A, B, PhantomData<Args>, PhantomData<Args2>, PhantomData<T>)
-where
-    A: Fn<Args>,
-    B: Fn<Args2>;
-
-fn map<A, B, Args, Args2, T>(a: A, b: B) -> Map<A, B, Args, Args2, T>
-where
-    A: Fn<Args>,
-    B: Fn<Args2>,
-{
-    Map(
-        a,
-        b,
-        PhantomData::default(),
-        PhantomData::default(),
-        PhantomData::default(),
-    )
+pub trait Func<Args, T> {
+    type Output;
+    fn call(&self, args: Args) -> Self::Output;
 }
 
-fn map_ok<A, B, Args, Args2, T, E>(a: A, b: B) -> Map<A, B, Args, Args2, Result<T, E>>
+/*
+pub fn map<F, Args, T>(f: F) -> impl Func<Args, T>
 where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<Args2>,
+    F: Func<Args, T>,
 {
-    Map(
-        a,
-        b,
-        PhantomData::default(),
-        PhantomData::default(),
-        PhantomData::default(),
-    )
+    f
 }
+*/
 
-fn map_some<A, B, Args, Args2, T>(a: A, b: B) -> Map<A, B, Args, Args2, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<Args2>,
-{
-    Map(
-        a,
-        b,
-        PhantomData::default(),
-        PhantomData::default(),
-        PhantomData::default(),
-    )
-}
-
-impl<A, B, Args, T> Map<A, B, Args, (T,), (T,)>
-where
-    A: Fn<Args, Output = T>,
-    B: Fn<(T,)>,
-{
-    #[inline]
-    fn apply_tuple(&self, args: Args) -> B::Output {
-        let args = self.0.call(args);
-        self.1.call((args,))
-    }
-}
-
-impl<A, B, Args, T> Map<A, B, Args, T, ()>
+// Default implementation of a func for T as output
+impl<A, B, Args, T> Func<Args, ()> for (A, B)
 where
     A: Fn<Args, Output = T>,
     B: Fn<T>,
 {
+    type Output = B::Output;
+
     #[inline]
-    fn apply(&self, args: Args) -> B::Output {
+    fn call(&self, args: Args) -> Self::Output {
         let args = self.0.call(args);
         self.1.call(args)
     }
 }
 
+// Subset of (A, B) T is (T,)
+impl<A, B, Args, T> Func<Args, (T,)> for (A, B)
+where
+    A: Fn<Args, Output = T>,
+    B: Fn<(T,)>,
+{
+    type Output = B::Output;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        let args = self.0.call(args);
+        self.1.call((args,))
+    }
+}
+
+// Subset of (A, B) where A is already a tuple that implements Func
+impl<A, B, Args, T, F> Func<Args, ((), (), F)> for (A, B)
+where
+    A: Fn<Args, Output = T>,
+    B: Func<T, F>,
+{
+    type Output = B::Output;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        let args = self.0.call(args);
+        self.1.call(args)
+    }
+}
+
+// Subset of (A, B) where is A is Func and B takes (T,)
+impl<A, B, Args, T, F> Func<Args, ((), (T,), F)> for (A, B)
+where
+    A: Fn<Args, Output = T>,
+    B: Func<(T,), F>,
+{
+    type Output = B::Output;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        let args = self.0.call(args);
+        self.1.call((args,))
+    }
+}
+
+// Default implementation for a func where T is a result
+impl<A, B, Args, T, E> Func<Args, (Result<T, E>, ())> for (A, B)
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<T>,
+{
+    type Output = Result<B::Output, E>;
+
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Ok(args) => Ok(self.1.call(args)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// Subset of (A, B) T is (T,)
+impl<A, B, Args, T, E> Func<Args, (Result<T, E>, ((),))> for (A, B)
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Fn<(T,)>,
+{
+    type Output = Result<B::Output, E>;
+
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Ok(args) => Ok(self.1.call((args,))),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// Subset of (A, B) where A is already a tuple that implements Func
+impl<A, B, Args, T, E, F> Func<Args, (Result<T, E>, (), F)> for (A, B)
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Func<T, F>,
+{
+    type Output = Result<B::Output, E>;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Ok(args) => Ok(self.1.call(args)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// Subset of (A, B) where is A is Func and B takes (T,)
+impl<A, B, Args, T, E, F> Func<Args, (Result<T, E>, ((),), F)> for (A, B)
+where
+    A: Fn<Args, Output = Result<T, E>>,
+    B: Func<(T,), F>,
+{
+    type Output = Result<B::Output, E>;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Ok(args) => Ok(self.1.call((args,))),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+// Default implementation for a func where T is an option
+impl<A, B, Args, T> Func<Args, (Option<T>, ())> for (A, B)
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    type Output = Option<B::Output>;
+
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Some(args) => Some(self.1.call(args)),
+            None => None,
+        }
+    }
+}
+
+// Subset of (A, B) T is (T,)
+impl<A, B, Args, T> Func<Args, (Option<T>, ((),))> for (A, B)
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    type Output = Option<B::Output>;
+
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Some(args) => Some(self.1.call((args,))),
+            None => None,
+        }
+    }
+}
+
+// Subset of (A, B) where A is already a tuple that implements Func
+impl<A, B, Args, T, F> Func<Args, (Option<T>, (), F)> for (A, B)
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Func<T, F>,
+{
+    type Output = Option<B::Output>;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Some(args) => Some(self.1.call(args)),
+            None => None,
+        }
+    }
+}
+
+// Subset of (A, B) where is A is Func and B takes (T,)
+impl<A, B, Args, T, F> Func<Args, (Option<T>, ((),), F)> for (A, B)
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Func<(T,), F>,
+{
+    type Output = Option<B::Output>;
+    #[inline]
+    fn call(&self, args: Args) -> Self::Output {
+        match self.0.call(args) {
+            Some(args) => Some(self.1.call((args,))),
+            None => None,
+        }
+    }
+}
+
+pub struct HandlerFn<F, T>(F, PhantomData<T>);
+
+impl<F, Args, T> Fn<Args> for HandlerFn<F, T>
+where
+    F: Func<Args, T>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.0.call(args)
+    }
+}
+
+impl<F, Args, T> FnMut<Args> for HandlerFn<F, T>
+where
+    F: Func<Args, T>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.0.call(args)
+    }
+}
+
+impl<F, Args, T> FnOnce<Args> for HandlerFn<F, T>
+where
+    F: Func<Args, T>,
+{
+    type Output = F::Output;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.0.call(args)
+    }
+}
+/*
 impl<A, B, Args, T, E> Map<A, B, Args, (T,), Result<T, E>>
 where
     A: Fn<Args, Output = Result<T, E>>,
@@ -127,12 +295,81 @@ where
     fn apply_some(&self, args: Args) -> Option<B::Output> {
         let args = self.0.call(args);
         match args {
-            Some(args) => Ok(self.1.call(args)),
+            Some(args) => Some(self.1.call(args)),
             None => None,
         }
     }
 }
 
+// Superset call implementation for T
+impl<A, B, Args, T> Func<Args> for Map<A, B, Args, T, Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<T>,
+{
+    type Output = Option<B::Output>;
+    fn call(&self, args: Args) -> Self::Output {
+        let args = self.0.call(args);
+        match args {
+            Some(args) => Some(self.1.call(args)),
+            None => None,
+        }
+    }
+}
+
+// Subset for more specific implementation (where B: Fn<(T,)>)
+impl<A, B, Args, T> Func<Args> for Map<A, B, Args, (T,), Option<T>>
+where
+    A: Fn<Args, Output = Option<T>>,
+    B: Fn<(T,)>,
+{
+    type Output = Option<B::Output>;
+    fn call(&self, args: Args) -> Self::Output {
+        let args = self.0.call(args);
+        match args {
+            Some(args) => Some(self.1.call((args,))),
+            None => None,
+        }
+    }
+}
+
+#[async_trait]
+impl<A, B, Args, Fut, T> Handler<Args, (T,)> for Map<A, B, Args, (T,), Fut>
+where
+    A: Fn<Args, Output = Fut> + Send + Sync,
+    B: Fn<(T,)> + Send + Sync,
+    Fut: Future<Output = T> + Send + Sync,
+    T: Send + Sync,
+    B::Output: Send + Sync,
+    Args: Send + Sync,
+{
+    type Output = B::Output;
+    async fn call(&self, args: Args) -> Self::Output {
+        let fut = self.0.call(args);
+        let args = fut.await;
+        self.1.call((args,))
+    }
+}
+
+#[async_trait]
+impl<A, B, Args, Fut, T> Handler<Args, ()> for Map<A, B, Args, T, Fut>
+where
+    A: Fn<Args, Output = Fut> + Send + Sync,
+    B: Fn<T> + Send + Sync,
+    Fut: Future<Output = T> + Send + Sync,
+    T: Send + Sync,
+    B::Output: Send + Sync,
+    Args: Send + Sync,
+{
+    type Output = B::Output;
+    async fn call(&self, args: Args) -> Self::Output {
+        let fut = self.0.call(args);
+        let args = fut.await;
+        self.1.call(args)
+    }
+}
+
+/// Option fn implementations
 impl<A, B, Args, T> Fn<Args> for Map<A, B, Args, (T,), Option<T>>
 where
     A: Fn<Args, Output = Option<T>>,
@@ -256,39 +493,10 @@ where
         self.apply_ok(args)
     }
 }
+*/
 
-impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
-    }
-}
-
-impl<A, B, Args> FnMut<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
-    }
-}
-
-impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, (A::Output,), (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    type Output = B::Output;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
-    }
-}
-
-impl<A, B, Args> Fn<Args> for Map<A, B, Args, A::Output, ()>
+/*
+impl<A, B, Args> Fn<Args> for Map<A, B, Args, A::Output>
 where
     A: Fn<Args>,
     B: Fn<A::Output>,
@@ -298,7 +506,7 @@ where
     }
 }
 
-impl<A, B, Args> FnMut<Args> for Map<A, B, Args, A::Output, ()>
+impl<A, B, Args> FnMut<Args> for Map<A, B, Args, A::Output>
 where
     A: Fn<Args>,
     B: Fn<A::Output>,
@@ -308,7 +516,7 @@ where
     }
 }
 
-impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, A::Output, ()>
+impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, A::Output>
 where
     A: Fn<Args>,
     B: Fn<A::Output>,
@@ -318,6 +526,38 @@ where
         self.apply(args)
     }
 }
+
+impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,)>
+where
+    A: Fn<Args>,
+    B: Fn<(A::Output,)>,
+{
+    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
+        self.apply_tuple(args)
+    }
+}
+
+impl<A, B, Args> FnMut<Args> for Map<A, B, Args, (A::Output,)>
+where
+    A: Fn<Args>,
+    B: Fn<(A::Output,)>,
+{
+    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
+        self.apply_tuple(args)
+    }
+}
+
+impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, (A::Output,)>
+where
+    A: Fn<Args>,
+    B: Fn<(A::Output,)>,
+{
+    type Output = B::Output;
+    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
+        self.apply_tuple(args)
+    }
+}
+*/
 
 fn foo() {}
 
@@ -357,23 +597,89 @@ fn optional(a: i32) -> Option<i32> {
         Some(a + 2)
     }
 }
+async fn async_test() -> i32 {
+    3
+}
+async fn async_multi(a: i32, b: i32) -> (i32, i32) {
+    (a * 2, b * 3)
+}
+
+fn assert_func<Args, T>(m: impl Func<Args, T>) {}
+fn assert_fn<Args>(m: impl Fn<Args>) {}
+fn assert_func_ok<Args, T, Output, E>(m: impl Func<Args, T, Output = Result<Output, E>>) {}
+fn assert_fn_ok<Args, T, E>(m: impl Fn<Args, Output = Result<T, E>>) {}
+fn assert_func_some<Args, T, Output>(m: impl Func<Args, T, Output = Option<Output>>) {}
+fn assert_fn_some<Args, T>(m: impl Fn<Args, Output = Option<T>>) {}
+
+macro_rules! compose {
+    ( $last:expr ) => { $last };
+    ( $head:expr, $($tail:expr), +) => {
+        ($head, compose!($($tail),+))
+    };
+}
+
+macro_rules! map {
+    ( $head:expr, $($tail:expr), +) => {
+        HandlerFn(($head, compose!($($tail),+)), PhantomData::default())
+    };
+}
 
 fn main() {
-    map(foo, foo)();
-    map(foo, test)();
-    map(test, plus)();
-    map(plus, plus)(4);
-    map(test, plus)();
-    map(multiply, plus)(4, 5);
-    map(output, multiply)();
-    map(map(output, multiply), plus)();
-    map_ok(error_in, plus);
-    map_ok(map_ok(error_in, plus), plus);
-    map_ok(map_ok(error_in, plus), error_in);
-    map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
-    map_ok(errors, multiply);
-    map_ok(map_ok(errors, multiply), errors);
-    map_some(optional, times);
-    map_some(map_some(optional, times), optional);
-    map_some(map_some(optional, times), times);
+    assert_func((foo, foo));
+    assert_func((foo, test));
+    assert_func((test, plus));
+    assert_func((plus, plus));
+    assert_func((multiply, plus));
+    assert_func((multiply, (plus, plus)));
+    assert_func((plus, (plus, plus)));
+
+    assert_func_ok((error_in, plus));
+    assert_func_ok((errors, multiply));
+    assert_func_ok((error_in, (plus, plus)));
+
+    assert_func_some((optional, (times, optional)));
+    assert_func_some((optional, (times, times)));
+    assert_func_some((optional, (error_in, optional)));
+
+    assert_fn(map!(plus, plus, plus));
+    assert_fn(map!(
+        plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus,
+        plus, plus, plus, plus, plus, plus, plus
+    ));
+    assert_fn_ok(map!(error_in, plus, plus));
+    assert_fn_some(map!(optional, times, optional));
+    assert_fn_some(map!(optional, times, times));
+    assert_fn_some(map!(optional, error_in, optional));
+
+    /*
+        map(foo, foo)();
+        map(foo, test)();
+        map(test, plus)();
+        map(plus, plus)(4);
+        map(test, plus)();
+        map(multiply, plus)(4, 5);
+        map(output, multiply)();
+        map(map(output, multiply), plus)();
+        map_ok(error_in, plus);
+        map_ok(map_ok(error_in, plus), plus);
+        map_ok(map_ok(error_in, plus), error_in);
+        map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
+        map_ok(errors, multiply);
+        map_ok(map_ok(errors, multiply), errors);
+        map_some(optional, times);
+        map_some(map_some(optional, times), optional);
+        map_some(map_some(optional, times), times);
+        map_some(map_some(optional, error_in), optional);
+        let _fut = async {
+            map_async(async_test, plus).call(()).await;
+            map_async(async_multi, multiply).call((3, 3)).await;
+            let m = map_async(async_multi, async_multi);
+            m.call((3, 4)).await
+            /*
+            map_async(map_async(async_multi, async_multi), multiply)
+                .call((3, 3))
+                .await;
+            */
+        };
+    */
 }
