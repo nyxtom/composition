@@ -1,6 +1,5 @@
 #![feature(fn_traits)]
 #![feature(unboxed_closures)]
-#![feature(type_alias_impl_trait)]
 use std::marker::PhantomData;
 
 pub trait Func<Args, T> {
@@ -309,12 +308,12 @@ async fn async_multi(a: i32, b: i32) -> (i32, i32) {
     (a * 2, b * 3)
 }
 
-fn assert_func<Args, T>(m: impl Func<Args, T>) {}
-fn assert_fn<Args>(m: impl Fn<Args>) {}
-fn assert_func_ok<Args, T, Output, E>(m: impl Func<Args, T, Output = Result<Output, E>>) {}
-fn assert_fn_ok<Args, T, E>(m: impl Fn<Args, Output = Result<T, E>>) {}
-fn assert_func_some<Args, T, Output>(m: impl Func<Args, T, Output = Option<Output>>) {}
-fn assert_fn_some<Args, T>(m: impl Fn<Args, Output = Option<T>>) {}
+fn assert_func<Args, T>(_: impl Func<Args, T>) {}
+fn assert_fn<Args>(_: impl Fn<Args>) {}
+fn assert_func_ok<Args, T, Output, E>(_: impl Func<Args, T, Output = Result<Output, E>>) {}
+fn assert_fn_ok<Args, T, E>(_: impl Fn<Args, Output = Result<T, E>>) {}
+fn assert_func_some<Args, T, Output>(_: impl Func<Args, T, Output = Option<Output>>) {}
+fn assert_fn_some<Args, T>(_: impl Fn<Args, Output = Option<T>>) {}
 
 macro_rules! compose {
     ( $last:expr ) => { $last };
@@ -356,25 +355,9 @@ fn main() {
     assert_fn_some(func!(optional, times, times));
     assert_fn_some(func!(optional, error_in, optional));
 
+    assert_fn_ok(func!(error_in, plus, optional, plus));
+
     /*
-        map(foo, foo)();
-        map(foo, test)();
-        map(test, plus)();
-        map(plus, plus)(4);
-        map(test, plus)();
-        map(multiply, plus)(4, 5);
-        map(output, multiply)();
-        map(map(output, multiply), plus)();
-        map_ok(error_in, plus);
-        map_ok(map_ok(error_in, plus), plus);
-        map_ok(map_ok(error_in, plus), error_in);
-        map_ok(map_ok(map_ok(error_in, plus), error_in), plus);
-        map_ok(errors, multiply);
-        map_ok(map_ok(errors, multiply), errors);
-        map_some(optional, times);
-        map_some(map_some(optional, times), optional);
-        map_some(map_some(optional, times), times);
-        map_some(map_some(optional, error_in), optional);
         let _fut = async {
             map_async(async_test, plus).call(()).await;
             map_async(async_multi, multiply).call((3, 3)).await;
