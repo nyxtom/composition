@@ -1,26 +1,12 @@
 #![feature(fn_traits)]
 #![feature(unboxed_closures)]
 #![feature(type_alias_impl_trait)]
-use async_trait::async_trait;
-use std::{
-    future::{Future, IntoFuture},
-    marker::PhantomData,
-    pin::Pin,
-};
+use std::marker::PhantomData;
 
 pub trait Func<Args, T> {
     type Output;
     fn call(&self, args: Args) -> Self::Output;
 }
-
-/*
-pub fn map<F, Args, T>(f: F) -> impl Func<Args, T>
-where
-    F: Func<Args, T>,
-{
-    f
-}
-*/
 
 // Default implementation of a func for T as output
 impl<A, B, Args, T> Func<Args, ()> for (A, B)
@@ -211,9 +197,9 @@ where
     }
 }
 
-pub struct HandlerFn<F, T>(F, PhantomData<T>);
+pub struct Function<F, T>(F, PhantomData<T>);
 
-impl<F, Args, T> Fn<Args> for HandlerFn<F, T>
+impl<F, Args, T> Fn<Args> for Function<F, T>
 where
     F: Func<Args, T>,
 {
@@ -222,7 +208,7 @@ where
     }
 }
 
-impl<F, Args, T> FnMut<Args> for HandlerFn<F, T>
+impl<F, Args, T> FnMut<Args> for Function<F, T>
 where
     F: Func<Args, T>,
 {
@@ -231,7 +217,7 @@ where
     }
 }
 
-impl<F, Args, T> FnOnce<Args> for HandlerFn<F, T>
+impl<F, Args, T> FnOnce<Args> for Function<F, T>
 where
     F: Func<Args, T>,
 {
@@ -241,98 +227,6 @@ where
     }
 }
 /*
-impl<A, B, Args, T, E> Map<A, B, Args, (T,), Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<(T,)>,
-{
-    #[inline]
-    fn apply_ok_tuple(&self, args: Args) -> Result<B::Output, E> {
-        let args = self.0.call(args);
-        match args {
-            Ok(args) => Ok(self.1.call((args,))),
-            Err(e) => Err(e),
-        }
-    }
-}
-
-impl<A, B, Args, T, E> Map<A, B, Args, T, Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<T>,
-{
-    #[inline]
-    fn apply_ok(&self, args: Args) -> Result<B::Output, E> {
-        let args = self.0.call(args);
-        match args {
-            Ok(args) => Ok(self.1.call(args)),
-            Err(e) => Err(e),
-        }
-    }
-}
-
-impl<A, B, Args, T> Map<A, B, Args, (T,), Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<(T,)>,
-{
-    #[inline]
-    fn apply_some_tuple(&self, args: Args) -> Option<B::Output> {
-        let args = self.0.call(args);
-        match args {
-            Some(args) => Some(self.1.call((args,))),
-            None => None,
-        }
-    }
-}
-
-impl<A, B, Args, T> Map<A, B, Args, T, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<T>,
-{
-    #[inline]
-    fn apply_some(&self, args: Args) -> Option<B::Output> {
-        let args = self.0.call(args);
-        match args {
-            Some(args) => Some(self.1.call(args)),
-            None => None,
-        }
-    }
-}
-
-// Superset call implementation for T
-impl<A, B, Args, T> Func<Args> for Map<A, B, Args, T, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<T>,
-{
-    type Output = Option<B::Output>;
-    fn call(&self, args: Args) -> Self::Output {
-        let args = self.0.call(args);
-        match args {
-            Some(args) => Some(self.1.call(args)),
-            None => None,
-        }
-    }
-}
-
-// Subset for more specific implementation (where B: Fn<(T,)>)
-impl<A, B, Args, T> Func<Args> for Map<A, B, Args, (T,), Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<(T,)>,
-{
-    type Output = Option<B::Output>;
-    fn call(&self, args: Args) -> Self::Output {
-        let args = self.0.call(args);
-        match args {
-            Some(args) => Some(self.1.call((args,))),
-            None => None,
-        }
-    }
-}
-
 #[async_trait]
 impl<A, B, Args, Fut, T> Handler<Args, (T,)> for Map<A, B, Args, (T,), Fut>
 where
@@ -366,195 +260,6 @@ where
         let fut = self.0.call(args);
         let args = fut.await;
         self.1.call(args)
-    }
-}
-
-/// Option fn implementations
-impl<A, B, Args, T> Fn<Args> for Map<A, B, Args, (T,), Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<(T,)>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_some_tuple(args)
-    }
-}
-
-impl<A, B, Args, T> FnMut<Args> for Map<A, B, Args, (T,), Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<(T,)>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_some_tuple(args)
-    }
-}
-
-impl<A, B, Args, T> FnOnce<Args> for Map<A, B, Args, (T,), Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<(T,)>,
-{
-    type Output = Option<B::Output>;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_some_tuple(args)
-    }
-}
-
-impl<A, B, Args, T> Fn<Args> for Map<A, B, Args, T, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<T>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_some(args)
-    }
-}
-
-impl<A, B, Args, T> FnMut<Args> for Map<A, B, Args, T, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<T>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_some(args)
-    }
-}
-
-impl<A, B, Args, T> FnOnce<Args> for Map<A, B, Args, T, Option<T>>
-where
-    A: Fn<Args, Output = Option<T>>,
-    B: Fn<T>,
-{
-    type Output = Option<B::Output>;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_some(args)
-    }
-}
-
-impl<A, B, Args, T, E> Fn<Args> for Map<A, B, Args, (T,), Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<(T,)>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_ok_tuple(args)
-    }
-}
-
-impl<A, B, Args, T, E> FnMut<Args> for Map<A, B, Args, (T,), Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<(T,)>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_ok_tuple(args)
-    }
-}
-
-impl<A, B, Args, T, E> FnOnce<Args> for Map<A, B, Args, (T,), Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<(T,)>,
-{
-    type Output = Result<B::Output, E>;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_ok_tuple(args)
-    }
-}
-
-impl<A, B, Args, T, E> Fn<Args> for Map<A, B, Args, T, Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<T>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_ok(args)
-    }
-}
-
-impl<A, B, Args, T, E> FnMut<Args> for Map<A, B, Args, T, Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<T>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_ok(args)
-    }
-}
-
-impl<A, B, Args, T, E> FnOnce<Args> for Map<A, B, Args, T, Result<T, E>>
-where
-    A: Fn<Args, Output = Result<T, E>>,
-    B: Fn<T>,
-{
-    type Output = Result<B::Output, E>;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_ok(args)
-    }
-}
-*/
-
-/*
-impl<A, B, Args> Fn<Args> for Map<A, B, Args, A::Output>
-where
-    A: Fn<Args>,
-    B: Fn<A::Output>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply(args)
-    }
-}
-
-impl<A, B, Args> FnMut<Args> for Map<A, B, Args, A::Output>
-where
-    A: Fn<Args>,
-    B: Fn<A::Output>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply(args)
-    }
-}
-
-impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, A::Output>
-where
-    A: Fn<Args>,
-    B: Fn<A::Output>,
-{
-    type Output = B::Output;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply(args)
-    }
-}
-
-impl<A, B, Args> Fn<Args> for Map<A, B, Args, (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
-    }
-}
-
-impl<A, B, Args> FnMut<Args> for Map<A, B, Args, (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
-    }
-}
-
-impl<A, B, Args> FnOnce<Args> for Map<A, B, Args, (A::Output,)>
-where
-    A: Fn<Args>,
-    B: Fn<(A::Output,)>,
-{
-    type Output = B::Output;
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        self.apply_tuple(args)
     }
 }
 */
@@ -618,9 +323,9 @@ macro_rules! compose {
     };
 }
 
-macro_rules! map {
+macro_rules! func {
     ( $head:expr, $($tail:expr), +) => {
-        HandlerFn(($head, compose!($($tail),+)), PhantomData::default())
+        Function(($head, compose!($($tail),+)), PhantomData::default())
     };
 }
 
@@ -641,15 +346,15 @@ fn main() {
     assert_func_some((optional, (times, times)));
     assert_func_some((optional, (error_in, optional)));
 
-    assert_fn(map!(plus, plus, plus));
-    assert_fn(map!(
+    assert_fn(func!(plus, plus, plus));
+    assert_fn(func!(
         plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus, plus,
         plus, plus, plus, plus, plus, plus, plus
     ));
-    assert_fn_ok(map!(error_in, plus, plus));
-    assert_fn_some(map!(optional, times, optional));
-    assert_fn_some(map!(optional, times, times));
-    assert_fn_some(map!(optional, error_in, optional));
+    assert_fn_ok(func!(error_in, plus, plus));
+    assert_fn_some(func!(optional, times, optional));
+    assert_fn_some(func!(optional, times, times));
+    assert_fn_some(func!(optional, error_in, optional));
 
     /*
         map(foo, foo)();
